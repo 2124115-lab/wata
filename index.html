@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>リアル落下！サンドイッチゲーム</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Mochiy+Pop+One&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Mochiy+Pop+One', sans-serif;
+            touch-action: none; /* Disable pull-to-refresh on mobile */
+        }
+        .game-canvas {
+            background: linear-gradient(to bottom, #87ceeb, #f0f8ff);
+            cursor: pointer;
+        }
+        .text-shadow {
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.4);
+        }
+    </style>
+</head>
+<body class="bg-yellow-50 flex items-center justify-center min-h-screen">
+
+    <div class="w-full max-w-md mx-auto bg-white rounded-2xl shadow-2xl p-4 sm:p-6 text-center border-4 border-yellow-300">
+        <h1 class="text-3xl sm:text-4xl font-bold text-yellow-900 text-shadow">リアル落下！サンドイッチゲーム</h1>
+        
+        <!-- Recipe Name -->
+        <div class="my-3">
+             <p class="text-yellow-700">次の注文は…</p>
+             <h2 id="recipe-name" class="text-2xl text-orange-600 font-bold h-8"></h2>
+        </div>
+
+        <!-- Game Info Bar -->
+        <div class="flex justify-between items-center bg-amber-100 rounded-lg p-3 my-4 text-amber-800">
+            <div>
+                <h2 class="text-sm sm:text-base font-bold">スコア</h2>
+                <p id="score" class="text-xl sm:text-2xl font-bold">0</p>
+            </div>
+            <div>
+                <h2 class="text-sm sm:text-base font-bold">重力</h2>
+                <p id="speed-level" class="text-xl sm:text-2xl font-bold text-red-600">x1.00</p>
+            </div>
+            <div>
+                <h2 class="text-sm sm:text-base font-bold">次の具材</h2>
+                <div id="recipe-display" class="w-16 h-10 mx-auto">
+                    <canvas id="next-ingredient-canvas" width="64" height="40"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Game Canvas -->
+        <div class="relative rounded-lg overflow-hidden border-2 border-amber-300">
+            <canvas id="gameCanvas" class="game-canvas"></canvas>
+            
+            <!-- Start Screen Overlay -->
+            <div id="start-screen" class="absolute inset-0 bg-black bg-opacity-50 flex flex-col items-center justify-center">
+                <h2 class="text-4xl font-bold text-white text-shadow mb-8">準備はいい？</h2>
+                <button id="start-button" class="bg-green-500 hover:bg-green-600 text-white text-2xl font-bold py-4 px-8 rounded-full shadow-lg transform hover:scale-105 transition-transform duration-200">
+                    スタート！
+                </button>
+            </div>
+
+            <!-- Game Over Screen Overlay -->
+            <div id="game-over-screen" class="absolute inset-0 bg-black bg-opacity-60 flex-col items-center justify-center hidden">
+                <h2 class="text-5xl font-bold text-white text-shadow mb-4">ゲームオーバー</h2>
+                <p class="text-white text-xl mb-2">最終スコア</p>
+                <p id="final-score" class="text-yellow-300 text-6xl font-bold mb-8">0</p>
+                <button id="restart-button" class="bg-blue-500 hover:bg-blue-600 text-white text-2xl font-bold py-4 px-8 rounded-full shadow-lg transform hover:scale-105 transition-transform duration-200">
+                    もう一度プレイ
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const nextIngredientCanvas = document.getElementById('next-ingredient-canvas');
+        const nextIngredientCtx = nextIngredientCanvas.getContext('2d');
+        const scoreEl = document.getElementById('score');
+        const speedLevelEl = document.getElementById('speed-level');
+        const recipeNameEl = document.getElementById('recipe-name');
+        const startScreen = document.getElementById('start-screen');
+        const gameOverScreen = document.getElementById('game-over-screen');
+        const startButton = document.getElementById('start-button');
+        const restartButton = document.getElementById('restart-button');
+        const finalScoreEl = document.getElementById('final-score');
+
+        // Game Configuration
+        let canvasWidth = canvas.parentElement.clientWidth;
+        let canvasHeight = canvasWidth * 1.2;
+        canvas.width = canvasWidth;
+        canvas.height = canvasHeight;
+        
+        const INGREDIENT_HEIGHT_RATIO = 0.05;
+        const INGREDIENT_WIDTH_RATIO = 0.3;
+        let INGREDIENT_HEIGHT = canvasHeight * INGREDIENT_HEIGHT_RATIO;
+        let INGREDIENT_WIDTH = canvasWidth * INGREDIENT_WIDTH_RATIO;
+        let PLAYER_WIDTH = canvasWidth * 0.35;
+        let PLAYER_HEIGHT = canvasHeight * INGREDIENT_HEIGHT_RATIO;
+        const GRAVITY = 0.05; // NEW: Constant gravity value
+
+        // Game State
+        let score = 0;
+        let isGameOver = true;
+        let animationFrameId;
+        let recipeTimeoutId = null;
+        let speedMultiplier = 1.0; // This will now act as a gravity multiplier
+
+        // Player (Bottom Bread)
+        let player = {
+            x: (canvas.width - PLAYER_WIDTH) / 2,
+            y: canvas.height - PLAYER_HEIGHT - 10,
+            width: PLAYER_WIDTH,
+            height: PLAYER_HEIGHT
+        };
+        
+        const INGREDIENTS = {
+            'パン': { color: '#f0d9a9', stroke: '#c4a371', path: 'M5,40 H95 V20 Q95,5 85,5 H15 Q5,5 5,20 Z' },
+            'レタス': { color: '#90EE90', stroke: '#2E8B57', path: 'M2,25 C10,5 30,8 40,20 C50,30 60,8 75,20 C90,32 98,15 98,25 V38 H2 Z' },
+            'トマト': { color: '#FF6347', stroke: '#DC143C', path: 'M50,20 A48,18 0 1,1 50,20.1 Z' },
+            'チーズ': { color: '#FFD700', stroke: '#DAA520', path: 'M5,35 L5,10 H95 V35 Z M20,18 A5,5 0 1,0 30,18 A5,5 0 1,0 20,18 Z M50,22 A7,7 0 1,0 64,22 A7,7 0 1,0 50,22 Z M80,16 A4,4 0 1,0 88,16 A4,4 0 1,0 80,16 Z' },
+            'ハム': { color: '#f0a0a0', stroke: '#e47171', path: 'M50,20 A45,16 0 1,1 50,20.1 Z' },
+            'ベーコン': { color: '#d36c4b', stroke: '#8c3b24', path: 'M2,15 C20,5 40,25 60,15 S80,5 98,15 V25 C80,35 60,5 40,25 S20,35 2,25 Z' },
+            'たまご': { color: '#FFFFFF', stroke: '#e8c46d', path: 'M50,20 C10,20 10,40 50,40 C90,40 90,20 50,20 Z M50,22 A12,12 0 1,1 50,21.9 Z', yolkColor: '#FFD700' },
+            'アボカド': { color: '#6B8E23', stroke: '#556B2F', path: 'M50,5 C 20,5 5,25 25,38 H75 C95,25 80,5 50,5 Z' },
+            'チキン': { color: '#D2B48C', stroke: '#8B4513', path: 'M5,35 Q 5,10 20,10 H80 Q95,10 95,35 Z' },
+            'おさかな': { color: '#B0E0E6', stroke: '#4682B4', path: 'M5,20 Q20,5 50,5 Q80,5 95,20 Q80,35 50,35 Q20,35 5,20 Z' },
+        };
+
+        for(let key in INGREDIENTS){
+            INGREDIENTS[key].path2D = new Path2D(INGREDIENTS[key].path);
+        }
+
+        const allIngredientTypes = Object.keys(INGREDIENTS);
+        const SANDWICH_RECIPES = {
+            'BLTサンド': ['レタス', 'トマト', 'ベーコン', 'パン'],
+            'クラブハウスサンド': ['レタス', 'トマト', 'チーズ', 'チキン', 'パン'],
+            'たまごサンド': ['たまご', 'レタス', 'パン'],
+            'てりやきチキンサンド': ['チキン', 'レタス', 'トマト', 'パン'],
+            'フィッシュサンド': ['おさかな', 'チーズ', 'レタス', 'パン'],
+            'ぜいたくサンド': ['アボカド', 'ベーコン', 'チーズ', 'トマト', 'レタス', 'パン']
+        };
+        const recipeKeys = Object.keys(SANDWICH_RECIPES);
+        
+        let fallingIngredients = [];
+        let stackedIngredients = [];
+        let currentRecipe = [];
+        let recipeIndex = 0;
+
+        // --- Drawing Functions ---
+        function drawIngredient(targetCtx, x, y, width, height, type) {
+            const ing = INGREDIENTS[type];
+            if (!ing) return;
+
+            targetCtx.save();
+            targetCtx.translate(x, y);
+            targetCtx.scale(width / 100, height / 40);
+            targetCtx.fillStyle = ing.color;
+            targetCtx.strokeStyle = ing.stroke;
+            targetCtx.lineWidth = 2 * (100 / width);
+            
+            targetCtx.fill(ing.path2D);
+            
+            if (type === 'たまご') {
+                targetCtx.fillStyle = ing.yolkColor;
+                const yolkPath = new Path2D('M50,22 A12,12 0 1,1 50,21.9 Z');
+                targetCtx.fill(yolkPath);
+            }
+            
+            targetCtx.stroke(ing.path2D);
+            targetCtx.restore();
+        }
+
+        function drawPlayer() {
+            drawIngredient(ctx, player.x, player.y, player.width, player.height, 'パン');
+        }
+
+        function drawFallingIngredients() {
+            fallingIngredients.forEach(ing => {
+                drawIngredient(ctx, ing.x, ing.y, ing.width, ing.height, ing.type);
+            });
+        }
+        
+        function drawStackedIngredients() {
+            stackedIngredients.forEach((ing, i) => {
+                const y = player.y - (i + 1) * ing.height;
+                drawIngredient(ctx, player.x, y, player.width, ing.height, ing.type);
+            });
+        }
+
+        // --- Game Logic ---
+        function generateRecipe() {
+            const randomRecipeKey = recipeKeys[Math.floor(Math.random() * recipeKeys.length)];
+            recipeNameEl.textContent = `「${randomRecipeKey}」`;
+            currentRecipe = SANDWICH_RECIPES[randomRecipeKey];
+            recipeIndex = 0;
+            updateRecipeDisplay();
+        }
+
+        function updateRecipeDisplay() {
+            nextIngredientCtx.clearRect(0, 0, nextIngredientCanvas.width, nextIngredientCanvas.height);
+            if (recipeIndex < currentRecipe.length) {
+                const nextIngredient = currentRecipe[recipeIndex];
+                drawIngredient(nextIngredientCtx, 0, 0, nextIngredientCanvas.width, nextIngredientCanvas.height, nextIngredient);
+            } else {
+                nextIngredientCtx.font = '32px sans-serif';
+                nextIngredientCtx.textAlign = 'center';
+                nextIngredientCtx.textBaseline = 'middle';
+                nextIngredientCtx.fillText('🎉', 32, 20);
+            }
+        }
+        
+        // --- MODIFIED: Spawn ingredient with free fall properties ---
+        function spawnIngredient() {
+            const nextIngredientType = currentRecipe[recipeIndex];
+            fallingIngredients.push({
+                x: Math.random() * (canvas.width - INGREDIENT_WIDTH),
+                y: -INGREDIENT_HEIGHT,
+                width: INGREDIENT_WIDTH,
+                height: INGREDIENT_HEIGHT,
+                velocityY: (0.5 + Math.random()) * speedMultiplier, // Small random initial downward velocity
+                type: nextIngredientType
+            });
+
+            const randomSpawns = Math.random() < 0.5 ? 1 : 0;
+            for (let i = 0; i < randomSpawns; i++) {
+                let randomType;
+                do {
+                    randomType = allIngredientTypes[Math.floor(Math.random() * allIngredientTypes.length)];
+                } while (randomType === nextIngredientType || randomType === 'パン');
+
+                fallingIngredients.push({
+                    x: Math.random() * (canvas.width - INGREDIENT_WIDTH),
+                    y: -INGREDIENT_HEIGHT * (Math.random() * 5 + 2),
+                    width: INGREDIENT_WIDTH,
+                    height: INGREDIENT_HEIGHT,
+                    velocityY: (0.5 + Math.random()) * speedMultiplier, // Small random initial downward velocity
+                    type: randomType
+                });
+            }
+        }
+        
+        // --- MODIFIED: Apply constant gravity to falling ingredients ---
+        function updateFallingIngredients() {
+            const effectiveGravity = GRAVITY * speedMultiplier;
+
+            for (let i = fallingIngredients.length - 1; i >= 0; i--) {
+                const ing = fallingIngredients[i];
+                // Apply constant gravity to velocity
+                ing.velocityY += effectiveGravity;
+                ing.y += ing.velocityY;
+
+                const stackTopY = player.y - stackedIngredients.length * PLAYER_HEIGHT;
+                if (
+                    ing.y + ing.height > stackTopY &&
+                    ing.y < stackTopY + PLAYER_HEIGHT &&
+                    ing.x < player.x + player.width &&
+                    ing.x + ing.width > player.x
+                ) {
+                    handleCatch(ing);
+                    fallingIngredients.splice(i, 1);
+                    continue;
+                }
+
+                if (ing.y > canvas.height) {
+                    if (ing.type === currentRecipe[recipeIndex]) { gameOver(); }
+                    fallingIngredients.splice(i, 1);
+                }
+            }
+        }
+
+        function handleCatch(caughtIngredient) {
+            if (isGameOver) return;
+            if (caughtIngredient.type === currentRecipe[recipeIndex]) {
+                stackedIngredients.push({ ...caughtIngredient, height: PLAYER_HEIGHT });
+                recipeIndex++;
+                score += 10;
+                updateScore();
+                
+                if (recipeIndex >= currentRecipe.length) {
+                    score += 100;
+                    updateScore();
+                    stackedIngredients = [];
+                    speedMultiplier += 0.15; // Increase gravity multiplier
+                    updateSpeedDisplay(); 
+                    updateRecipeDisplay(); // Show 🎉
+                    recipeTimeoutId = setTimeout(() => {
+                        generateRecipe();
+                        spawnIngredient();
+                    }, 1000);
+                } else {
+                     spawnIngredient();
+                     updateRecipeDisplay();
+                }
+            } else {
+                gameOver();
+            }
+        }
+
+        function updateScore() {
+            scoreEl.textContent = score;
+        }
+
+        function updateSpeedDisplay() {
+            speedLevelEl.textContent = `x${speedMultiplier.toFixed(2)}`;
+        }
+
+        function resetGame() {
+            score = 0;
+            updateScore();
+            speedMultiplier = 1.0;
+            updateSpeedDisplay();
+            player.x = (canvas.width - player.width) / 2;
+            fallingIngredients = [];
+            stackedIngredients = [];
+            isGameOver = false;
+        }
+
+        function startGame() {
+            clearTimeout(recipeTimeoutId);
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            resetGame();
+            generateRecipe();
+            spawnIngredient();
+            gameLoop();
+        }
+
+        function gameOver() {
+            if (isGameOver) return;
+            isGameOver = true;
+            clearTimeout(recipeTimeoutId);
+            cancelAnimationFrame(animationFrameId);
+            finalScoreEl.textContent = score;
+            gameOverScreen.style.display = 'flex';
+            gameOverScreen.classList.remove('hidden');
+        }
+
+        function gameLoop() {
+            if (isGameOver) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawPlayer();
+            drawStackedIngredients();
+            updateFallingIngredients();
+            drawFallingIngredients();
+            animationFrameId = requestAnimationFrame(gameLoop);
+        }
+
+        function handleMove(clientX) {
+            if (isGameOver) return;
+            const rect = canvas.getBoundingClientRect();
+            let newX = clientX - rect.left - player.width / 2;
+            if (newX < 0) newX = 0;
+            if (newX > canvas.width - player.width) newX = canvas.width - player.width;
+            player.x = newX;
+        }
+
+        function resizeGame() {
+            canvasWidth = canvas.parentElement.clientWidth;
+            canvasHeight = canvasWidth * 1.2;
+            canvas.width = canvasWidth;
+            canvas.height = canvasHeight;
+
+            INGREDIENT_HEIGHT = canvasHeight * INGREDIENT_HEIGHT_RATIO;
+            INGREDIENT_WIDTH = canvasWidth * INGREDIENT_WIDTH_RATIO;
+            PLAYER_WIDTH = canvasWidth * 0.35;
+            PLAYER_HEIGHT = canvasHeight * INGREDIENT_HEIGHT_RATIO;
+
+            player.width = PLAYER_WIDTH;
+            player.height = PLAYER_HEIGHT;
+            player.y = canvas.height - PLAYER_HEIGHT - 10;
+        }
+
+        window.addEventListener('resize', resizeGame);
+        canvas.addEventListener('mousemove', e => handleMove(e.clientX));
+        canvas.addEventListener('touchmove', e => { e.preventDefault(); handleMove(e.touches[0].clientX); });
+        startButton.addEventListener('click', startGame);
+        restartButton.addEventListener('click', startGame);
+
+    </script>
+</body>
+</html>
